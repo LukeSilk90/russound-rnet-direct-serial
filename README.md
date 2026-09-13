@@ -30,7 +30,7 @@ Other RNET models may work because the implemented command subset is shared by C
 
 The RNET framing and command approach is derived from the GPL-licensed [`laf/russound`](https://github.com/laf/russound) Python API originally written by Neil Lathwood and contributors. That package was created to support Home Assistant's original `russound_rnet` integration.
 
-This project retains that lineage and is therefore released under **GPL-3.0-or-later**. The direct serial transport, verified command handling, automatic recovery, diagnostics, multi-controller config flow and current Home Assistant integration were substantially developed and tested by Luke Silk.
+This project retains that lineage and is therefore released under **GPL-3.0-or-later**. The direct serial transport, verified command handling, automatic recovery, diagnostics, multi-controller config flow and current Home Assistant integration were substantially developed and tested.
 
 This repository does not redistribute Russound protocol manuals.
 
