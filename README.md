@@ -43,17 +43,6 @@ This repository does not redistribute Russound protocol manuals.
 5. Open **Settings > Devices & services > Add integration**.
 6. Search for **Russound RNET Direct Serial** and follow the setup form.
 
-## Migrating from the YAML prototype
-
-1. Back up `/config/custom_components/russound_rnet_local`.
-2. Remove or comment out the old `media_player: - platform: russound_rnet_local` YAML block.
-3. Replace the old custom-component directory with this release.
-4. Restart Home Assistant.
-5. Add **Russound RNET Direct Serial** from **Settings > Devices & services**.
-6. Enter the same serial path, controller count, zone names and source names.
-7. Confirm the new entities work before deleting the backup.
-
-Do not run `rnet_test.py` or other standalone serial tools while the integration is loaded, because only one process can own the serial port.
 
 ## Manual installation
 
