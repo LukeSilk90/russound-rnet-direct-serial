@@ -1,0 +1,17 @@
+{
+  "domain": "russound_rnet_local",
+  "name": "Russound RNET Direct Serial",
+  "codeowners": [
+    "@LukeSilk90"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/LukeSilk90/russound-rnet-direct-serial",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/LukeSilk90/russound-rnet-direct-serial/issues",
+  "requirements": [
+    "pyserial==3.5"
+  ],
+  "version": "1.0.0"
+}

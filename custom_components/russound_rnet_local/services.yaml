@@ -1,0 +1,3 @@
+reset_connection:
+  name: Reset connection
+  description: Closes, reopens and validates all configured Russound serial connections.

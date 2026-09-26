@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Russound RNET",
+        "description": "Connect the controller via a compatible USB-to-RS232 adaptor. Use a stable /dev/serial/by-id path where available.",
+        "data": {
+          "name": "System name",
+          "port": "Serial port",
+          "baudrate": "Baud rate",
+          "controllers": "Number of linked controllers",
+          "zone_names": "Zone names, comma separated",
+          "source_names": "Source names, comma separated"
+        }
+      }
+    },
+    "error": {"cannot_connect": "Unable to receive a valid RNET response from Controller 1, Zone 1."},
+    "abort": {"already_configured": "This serial port is already configured."}
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Russound zones and sources",
+        "data": {
+          "controllers": "Number of linked controllers",
+          "zone_names": "Zone names, comma separated",
+          "source_names": "Source names, comma separated"
+        }
+      }
+    }
+  },
+  "services": {
+    "reset_connection": {
+      "name": "Reset connection",
+      "description": "Closes, reopens and validates every Russound serial connection."
+    }
+  }
+}
