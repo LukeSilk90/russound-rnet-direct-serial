@@ -1,3 +1,30 @@
 reset_connection:
   name: Reset connection
-  description: Closes, reopens and validates all configured Russound serial connections.
+  description: >-
+    Closes, reopens and validates every configured Russound serial connection.
+    Use this if the zones become unavailable after a power cut or a USB glitch.
+
+normalise_zone:
+  name: Normalise zone
+  description: >-
+    Resets inherited installer tone settings on a zone. Sets bass, treble and
+    balance flat, and turns off loudness, do not disturb and party mode.
+  fields:
+    controller:
+      name: Controller
+      description: Controller number, where 1 is the controller with the serial cable.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 6
+          mode: box
+    zone:
+      name: Zone
+      description: Zone number within that controller, 1 to 6.
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 6
+          mode: box

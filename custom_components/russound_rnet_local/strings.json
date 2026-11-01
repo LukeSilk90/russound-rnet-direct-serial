@@ -3,19 +3,31 @@
     "step": {
       "user": {
         "title": "Connect to Russound RNET",
-        "description": "Connect the controller via a compatible USB-to-RS232 adaptor. Use a stable /dev/serial/by-id path where available.",
+        "description": "Connect the controller using a true RS-232 adaptor. Prefer a stable /dev/serial/by-id/... path.\n\nDetected ports: {ports}\n\nZone names are applied in order across controllers, six zones per controller. Source names must match the physical rear-panel source input numbers.",
         "data": {
           "name": "System name",
           "port": "Serial port",
           "baudrate": "Baud rate",
           "controllers": "Number of linked controllers",
           "zone_names": "Zone names, comma separated",
-          "source_names": "Source names, comma separated"
+          "source_names": "Source names, comma separated",
+          "enable_tone_controls": "Add tone, balance and party controls",
+          "enable_keypad_controls": "Add keypad backlight controls"
+        },
+        "data_description": {
+          "port": "The serial device connected to the controller with the RS-232 cable.",
+          "controllers": "Controllers linked over RNET Link. Controller 1 is zones 1-6, controller 2 is zones 7-12.",
+          "enable_tone_controls": "Creates bass, treble, balance, turn-on volume, loudness, do not disturb and party mode entities.",
+          "enable_keypad_controls": "Only useful if UNO keypads are fitted. Disabled by default."
         }
       }
     },
-    "error": {"cannot_connect": "Unable to receive a valid RNET response from Controller 1, Zone 1."},
-    "abort": {"already_configured": "This serial port is already configured."}
+    "error": {
+      "cannot_connect": "No valid RNET reply from controller 1, zone 1. Check the cable type, the Front/Rear RS-232 switch, the baud rate, and that no other program is using the port."
+    },
+    "abort": {
+      "already_configured": "This serial port is already configured."
+    }
   },
   "options": {
     "step": {
@@ -24,8 +36,32 @@
         "data": {
           "controllers": "Number of linked controllers",
           "zone_names": "Zone names, comma separated",
-          "source_names": "Source names, comma separated"
+          "source_names": "Source names, comma separated",
+          "enable_tone_controls": "Add tone, balance and party controls",
+          "enable_keypad_controls": "Add keypad backlight controls"
         }
+      }
+    }
+  },
+  "entity": {
+    "number": {
+      "bass": {"name": "Bass"},
+      "treble": {"name": "Treble"},
+      "balance": {"name": "Balance"},
+      "turn_on_volume": {"name": "Turn-on volume"}
+    },
+    "switch": {
+      "loudness": {"name": "Loudness"},
+      "do_not_disturb": {"name": "Do not disturb"}
+    },
+    "select": {
+      "party_mode": {
+        "name": "Party mode",
+        "state": {"off": "Off", "on": "On", "master": "Master"}
+      },
+      "background_colour": {
+        "name": "Keypad backlight",
+        "state": {"off": "Off", "amber": "Amber", "green": "Green"}
       }
     }
   },
@@ -33,6 +69,14 @@
     "reset_connection": {
       "name": "Reset connection",
       "description": "Closes, reopens and validates every Russound serial connection."
+    },
+    "normalise_zone": {
+      "name": "Normalise zone",
+      "description": "Resets inherited installer tone settings on a zone to neutral values.",
+      "fields": {
+        "controller": {"name": "Controller", "description": "Controller number, 1 to 6."},
+        "zone": {"name": "Zone", "description": "Zone number within that controller, 1 to 6."}
+      }
     }
   }
 }

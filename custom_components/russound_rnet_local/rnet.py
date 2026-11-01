@@ -1,14 +1,16 @@
-"""Robust direct-serial client for the Russound RNET protocol.
+"""Direct-serial client for the Russound RNET protocol.
 
 Derived from the ``russound`` Python API originally written by Neil Lathwood
 and contributors: https://github.com/laf/russound
 
 Original work Copyright (c) 2014 Neil Lathwood and contributors.
-Direct-serial transport, command verification, recovery and diagnostics
-Copyright (c) 2026 Luke Silk and contributors.
+Direct-serial transport, command verification, recovery, diagnostics and
+extended zone parameters Copyright (c) 2026 Luke Silk and contributors.
 
 This program is free software under the GNU General Public License, version 3
 or, at your option, any later version. See the repository LICENSE file.
+
+SPDX-License-Identifier: GPL-3.0-or-later
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import serial
+
+
 _LOGGER = logging.getLogger(__name__)
 
 # RNET protocol constants
@@ -29,6 +33,26 @@ KEYPAD_ID = 0x70
 BROADCAST = 0x7F
 READ_ATTEMPTS = 10
 MIN_REPLY_LEN = 24
+
+# RNET zone parameter identifiers (Russound Controllers RNET protocol, section 8).
+PARAM_BASS = 0x00
+PARAM_TREBLE = 0x01
+PARAM_LOUDNESS = 0x02
+PARAM_BALANCE = 0x03
+PARAM_TURN_ON_VOLUME = 0x04
+PARAM_BACKGROUND_COLOUR = 0x05
+PARAM_DO_NOT_DISTURB = 0x06
+PARAM_PARTY_MODE = 0x07
+
+# Tone/balance controls are transmitted as 0x00-0x14 and displayed as -10..+10.
+TONE_OFFSET = 10
+TONE_MIN = -10
+TONE_MAX = 10
+
+PARTY_MODES = {0: "off", 1: "on", 2: "master"}
+PARTY_MODE_VALUES = {name: value for value, name in PARTY_MODES.items()}
+BACKGROUND_COLOURS = {0: "off", 1: "amber", 2: "green"}
+BACKGROUND_COLOUR_VALUES = {name: value for value, name in BACKGROUND_COLOURS.items()}
 
 # Recovery behaviour
 FAILURES_BEFORE_RECONNECT = 2
@@ -50,6 +74,11 @@ def _build_frame(body: list[int]) -> bytes:
     msg.append(_checksum(msg))
     msg.append(END_BYTE)
     return bytes(msg)
+
+
+def _clamp_tone(value: int) -> int:
+    """Clamp a tone or balance value to the documented -10..+10 range."""
+    return max(TONE_MIN, min(TONE_MAX, int(value)))
 
 
 def _utc_iso(timestamp: float | None) -> str | None:
@@ -204,7 +233,9 @@ class RussoundSerial:
             self._record_failure_locked(f"write failed: {err}")
             raise
 
-    def _read_reply_locked(self, signature: bytes) -> bytearray | None:
+    def _read_reply_locked(
+        self, signature: bytes, minimum_length: int = MIN_REPLY_LEN
+    ) -> bytearray | None:
         """Read until a complete frame containing signature arrives."""
         if self._serial is None:
             return None
@@ -216,7 +247,7 @@ class RussoundSerial:
                 if waiting:
                     buffer += self._serial.read(waiting)
                 index = buffer.find(signature)
-                if index != -1 and len(buffer) - index >= MIN_REPLY_LEN:
+                if index != -1 and len(buffer) - index >= minimum_length:
                     reply = buffer[index:]
                     self._record_success_locked(len(reply))
                     _LOGGER.debug("RX %s", bytes(reply).hex(" "))
@@ -242,10 +273,20 @@ class RussoundSerial:
         reply = self._read_reply_locked(signature)
         if reply is None:
             return None
+        # Bytes 21-31 of the documented All Zone Info reply, relative to the
+        # 04 02 00 zz 07 signature. Verified against captured CAV6.6 responses.
         return {
             "power": reply[11],
             "source": reply[12] + 1,
             "volume": reply[13] * 2,
+            "bass": reply[14] - TONE_OFFSET,
+            "treble": reply[15] - TONE_OFFSET,
+            "loudness": bool(reply[16]),
+            "balance": reply[17] - TONE_OFFSET,
+            "system_on": bool(reply[18]),
+            "shared_source": bool(reply[19]),
+            "party_mode": PARTY_MODES.get(reply[20], "unknown"),
+            "do_not_disturb": bool(reply[21]),
         }
 
     def get_zone_info(self, controller: int, zone: int, retry: bool = True) -> dict | None:
@@ -404,3 +445,196 @@ class RussoundSerial:
         time.sleep(COMMAND_VERIFY_DELAY)
         return self.get_zone_info(1, 1, retry=True) is not None
 
+    # ------------------------------------------------------------------
+    # Extended zone parameters
+    #
+    # These use the RNET "Set Data" (0x00) and "Request Data" (0x01) message
+    # types with a five-level target path, rather than the Event (0x05)
+    # messages used by power, source and volume.
+    #
+    # NOTE: the read path is validated against captured CAV6.6 All Zone Info
+    # replies. The write path is implemented from the published protocol and
+    # should be bench-verified per controller model.
+    # ------------------------------------------------------------------
+
+    def _parameter_request_frame(self, controller: int, zone: int, param: int) -> bytes:
+        """Build a Request Data frame for a single zone parameter."""
+        cc, zz = controller - 1, zone - 1
+        return _build_frame(
+            [cc, 0x00, BROADCAST, cc, zz, KEYPAD_ID,
+             0x01, 0x05, 0x02, 0x00, zz, 0x00, int(param), 0x00, 0x00, 0x00]
+        )
+
+    def _parameter_set_frame(
+        self, controller: int, zone: int, param: int, value: int
+    ) -> bytes:
+        """Build a Set Data frame for a single zone parameter."""
+        cc, zz = controller - 1, zone - 1
+        return _build_frame(
+            [cc, 0x00, BROADCAST, cc, zz, KEYPAD_ID,
+             0x00, 0x05, 0x02, 0x00, zz, 0x00, int(param),
+             0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, int(value)]
+        )
+
+    def _read_parameter_once_locked(
+        self, controller: int, zone: int, param: int
+    ) -> int | None:
+        """Read one raw parameter value. The lock must already be held."""
+        zz = zone - 1
+        signature = bytes([0x05, 0x02, 0x00, zz, 0x00, int(param)])
+        self._ensure_connected_locked()
+        assert self._serial is not None
+        self._serial.reset_input_buffer()
+        self._send_locked(self._parameter_request_frame(controller, zone, param))
+        reply = self._read_reply_locked(signature, minimum_length=13)
+        if reply is None:
+            return None
+        return reply[12]
+
+    def get_zone_parameter(
+        self, controller: int, zone: int, param: int, retry: bool = True
+    ) -> int | None:
+        """Read a raw zone parameter value, reconnecting once on failure."""
+        with self._lock:
+            value = self._read_parameter_once_locked(controller, zone, param)
+            if value is not None or not retry:
+                return value
+            if not self._reconnect_locked(
+                f"no parameter reply from controller {controller} zone {zone}"
+            ):
+                return None
+            return self._read_parameter_once_locked(controller, zone, param)
+
+    def set_zone_parameter(
+        self, controller: int, zone: int, param: int, value: int
+    ) -> int | None:
+        """Set a zone parameter and confirm it by reading the value back."""
+        frame = self._parameter_set_frame(controller, zone, param, value)
+        description = (
+            f"parameter 0x{param:02x}={value} controller={controller} zone={zone}"
+        )
+        for attempt in (1, 2):
+            with self._lock:
+                try:
+                    self._ensure_connected_locked()
+                    assert self._serial is not None
+                    self._serial.reset_input_buffer()
+                    self._send_locked(frame)
+                except (serial.SerialException, OSError) as err:
+                    _LOGGER.warning("%s attempt %s write failed: %s", description, attempt, err)
+                time.sleep(COMMAND_VERIFY_DELAY)
+                readback = self._read_parameter_once_locked(controller, zone, param)
+                if readback == value:
+                    _LOGGER.debug("Verified %s", description)
+                    return readback
+                _LOGGER.warning(
+                    "Could not verify %s on attempt %s; read back %s",
+                    description, attempt, readback,
+                )
+                if attempt == 1:
+                    self._reconnect_locked(f"parameter verification failed: {description}")
+        return None
+
+    # -- friendly wrappers --------------------------------------------------
+
+    def set_bass(self, controller: int, zone: int, level: int) -> int | None:
+        """Set bass between -10 and +10. Returns the displayed level."""
+        raw = self.set_zone_parameter(
+            controller, zone, PARAM_BASS, _clamp_tone(level) + TONE_OFFSET
+        )
+        return None if raw is None else raw - TONE_OFFSET
+
+    def set_treble(self, controller: int, zone: int, level: int) -> int | None:
+        """Set treble between -10 and +10. Returns the displayed level."""
+        raw = self.set_zone_parameter(
+            controller, zone, PARAM_TREBLE, _clamp_tone(level) + TONE_OFFSET
+        )
+        return None if raw is None else raw - TONE_OFFSET
+
+    def set_balance(self, controller: int, zone: int, position: int) -> int | None:
+        """Set balance from -10 (left) through 0 (centre) to +10 (right)."""
+        raw = self.set_zone_parameter(
+            controller, zone, PARAM_BALANCE, _clamp_tone(position) + TONE_OFFSET
+        )
+        return None if raw is None else raw - TONE_OFFSET
+
+    def set_loudness(self, controller: int, zone: int, enabled: bool) -> bool | None:
+        """Enable or disable loudness compensation."""
+        raw = self.set_zone_parameter(
+            controller, zone, PARAM_LOUDNESS, 1 if enabled else 0
+        )
+        return None if raw is None else bool(raw)
+
+    def set_do_not_disturb(self, controller: int, zone: int, enabled: bool) -> bool | None:
+        """Enable or disable do not disturb.
+
+        Not supported by CAS44 and CAA66 controllers.
+        """
+        raw = self.set_zone_parameter(
+            controller, zone, PARAM_DO_NOT_DISTURB, 1 if enabled else 0
+        )
+        return None if raw is None else bool(raw)
+
+    def set_turn_on_volume(self, controller: int, zone: int, volume: int) -> int | None:
+        """Set the power-on volume, 0-100 in steps of 2."""
+        requested = max(0, min(100, int(volume)))
+        raw = self.set_zone_parameter(
+            controller, zone, PARAM_TURN_ON_VOLUME, requested // 2
+        )
+        return None if raw is None else raw * 2
+
+    def set_party_mode(self, controller: int, zone: int, mode: str) -> str | None:
+        """Set party mode to off, on or master.
+
+        Not supported by CAS44 and CAA66 controllers.
+        """
+        if mode not in PARTY_MODE_VALUES:
+            raise ValueError(f"Unknown party mode: {mode}")
+        raw = self.set_zone_parameter(
+            controller, zone, PARAM_PARTY_MODE, PARTY_MODE_VALUES[mode]
+        )
+        return None if raw is None else PARTY_MODES.get(raw)
+
+    def set_background_colour(self, controller: int, zone: int, colour: str) -> str | None:
+        """Set the keypad backlight colour to off, amber or green.
+
+        Only affects systems with UNO keypads attached.
+        """
+        if colour not in BACKGROUND_COLOUR_VALUES:
+            raise ValueError(f"Unknown background colour: {colour}")
+        raw = self.set_zone_parameter(
+            controller, zone, PARAM_BACKGROUND_COLOUR, BACKGROUND_COLOUR_VALUES[colour]
+        )
+        return None if raw is None else BACKGROUND_COLOURS.get(raw)
+
+    def get_turn_on_volume(self, controller: int, zone: int) -> int | None:
+        """Read the power-on volume as a 0-100 percentage."""
+        raw = self.get_zone_parameter(controller, zone, PARAM_TURN_ON_VOLUME)
+        return None if raw is None else raw * 2
+
+    def get_background_colour(self, controller: int, zone: int) -> str | None:
+        """Read the keypad backlight colour."""
+        raw = self.get_zone_parameter(controller, zone, PARAM_BACKGROUND_COLOUR)
+        return None if raw is None else BACKGROUND_COLOURS.get(raw)
+
+    def normalise_zone(self, controller: int, zone: int) -> dict[str, bool]:
+        """Reset inherited installer tone settings to neutral values.
+
+        Sets bass, treble and balance flat, disables loudness and do not
+        disturb, and clears party mode. Returns a per-parameter result map so
+        callers can report partial success on controllers that do not support
+        every parameter.
+        """
+        results: dict[str, bool] = {}
+        results["bass"] = self.set_bass(controller, zone, 0) is not None
+        results["treble"] = self.set_treble(controller, zone, 0) is not None
+        results["balance"] = self.set_balance(controller, zone, 0) is not None
+        results["loudness"] = self.set_loudness(controller, zone, False) is not None
+        results["do_not_disturb"] = (
+            self.set_do_not_disturb(controller, zone, False) is not None
+        )
+        results["party_mode"] = self.set_party_mode(controller, zone, "off") is not None
+        _LOGGER.info(
+            "Normalised controller %s zone %s: %s", controller, zone, results
+        )
+        return results
